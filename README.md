@@ -16,8 +16,8 @@ https://create.arduino.cc/projecthub/tylerpeppy/25-khz-4-pin-pwm-fan-control-wit
 https://create.arduino.cc/projecthub/Topocalma/esp8266-arduino-wifi-shield-for-windows-255407
 
 Default pins (On Arduino Mega 2560):
-Fan pwm: 9
-Fan tacho: 2
-Water temp: 4
-EC(TDS) pin: A1
-Wifi ESP: Serial1 (19(RX), 18(TX))
+- Fan pwm: 9
+- Fan tacho: 2
+- Water temp: 4
+- EC(TDS) pin: A1
+- Wifi ESP: Serial1 (19(RX), 18(TX))
