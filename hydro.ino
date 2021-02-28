@@ -32,7 +32,7 @@ WiFiEspServer server(80);
 // fan
 word fanPin = 9;
 word fanTacho = 2; // only use 2, 3, 18, 19, 20 or 21 on arduino mega 2560
-int fanSpeed = 15;
+int fanSpeed = 10;
 volatile byte halfRevolutions;
 unsigned int rpm;
 unsigned long timeold;
@@ -82,6 +82,12 @@ void setup()
   fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed);
   pwmDuty((byte)fanSpeed);
 
+  //turn on foggers
+  pinMode(fogger1Pin, OUTPUT);
+  pinMode(fogger2Pin, OUTPUT);
+  digitalWrite(fogger1Pin, HIGH);
+  digitalWrite(fogger2Pin, HIGH);
+
   // initialize tds
   gravityTds.setPin(TdsSensorPin);
   gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
@@ -90,6 +96,7 @@ void setup()
 
   //initialize light
   lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty);
+  pinMode(lightPin, OUTPUT);
   analogWrite(lightPin, lightDuty * 255 / 100);
   
   // initialize ESP module
@@ -154,10 +161,12 @@ void loop()
     foggerState = false;
     digitalWrite(fogger1Pin, LOW);
     digitalWrite(fogger2Pin, LOW);
-  } else if(!foggerState && !fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset*1000))){
+    Serial.println("Setting foggers to low");
+  } else if(!foggerState && !fanState && (ms - fanStateTime) > ((fanOffTime * 60000) - (foggerOffset*1000))){
     foggerState = true;
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
+    Serial.println("Setting foggers to high");
   }
   
   // listen for incoming clients
@@ -236,14 +245,16 @@ void loop()
               Serial.print("Setting light to: ");
               Serial.println(lightDuty);
             }
-//            char result = matchState.Match("ec=(%d+)");
-//            if (result == REGEXP_MATCHED){
-//              char buf [4];
-//              matchState.GetCapture (buf, 0);
-//              int measuredEc = atoi(buf);
-//              Serial.print("Setting ec to: ");
-//              Serial.println(ec);
-//            }
+            result = matchState.Match("ec=(%d+)");
+            if (result == REGEXP_MATCHED){
+              char buf [10];
+              matchState.GetCapture (buf, 0);
+              int measuredEc = atoi(buf);
+              waterTemp = getTemp();
+              gravityTds.setEcValue((float)measuredEc, waterTemp);
+              Serial.print("Setting ec to: ");
+              Serial.println(measuredEc);
+            }
           }
           currentLine = "";
         }         
