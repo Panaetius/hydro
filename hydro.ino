@@ -43,8 +43,8 @@ unsigned long fanStateTime;
 
 //fogger
 word fogger1Pin = 6;
-word fogger7Pin = 7;
-unsigned int foggerOffset = 60 * 1000;
+word fogger2Pin = 7;
+unsigned int foggerOffset = 60;
 bool foggerState = true;
 
 //light
@@ -79,7 +79,7 @@ void setup()
   timeold = 0;
   fanStateTime = 0;
   pwm25kHzBegin();
-  fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed)
+  fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed);
   pwmDuty((byte)fanSpeed);
 
   // initialize tds
@@ -89,7 +89,7 @@ void setup()
   gravityTds.begin();  //initialization
 
   //initialize light
-  lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty)
+  lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty);
   analogWrite(lightPin, lightDuty * 255 / 100);
   
   // initialize ESP module
@@ -132,7 +132,7 @@ void loop()
     fanStateTime = ms; 
   }
   
-  if ( >= 20 || (ms - timeold) > 3000) { 
+  if (halfRevolutions >= 20 || (ms - timeold) > 3000) { 
     //Update RPM every 20 counts, increase this for better RPM resolution,
     //decrease for faster update
     rpm = 30*1000/(ms - timeold)*halfRevolutions;
@@ -150,11 +150,11 @@ void loop()
     fanStateTime = ms;
   }
 
-  if (foggerState && fanstate && (ms - fanStateTime) > (fanOnTime * 60000 - foggerOffset)){
+  if (foggerState && fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset*1000))){
     foggerState = false;
     digitalWrite(fogger1Pin, LOW);
     digitalWrite(fogger2Pin, LOW);
-  } else if(!foggerState && !fanstate && (ms - fanStateTime) > (fanOnTime * 60000 - foggerOffset)){
+  } else if(!foggerState && !fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset*1000))){
     foggerState = true;
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
@@ -263,11 +263,11 @@ void writeEEPROM(int address, int value){
   EEPROM.put(address+2, value);
 }
 
-int getEEPROM(int address, int default){
+int getEEPROM(int address, int def){
   int set = 0;
   EEPROM.get(address, set);
   if (set != 1){
-    return default;
+    return def;
   }
   EEPROM.get(address+2, set);
   return set;
