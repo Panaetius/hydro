@@ -14,7 +14,13 @@
 SoftwareSerial Serial1(6, 7); // RX, TX
 #endif
 
-#define TdsSensorPin A1
+#define TdsSensorPin A13
+
+//EEPROM
+int eepromStart = 512;
+int fanSpeedOffset = 0;
+int lightDutyOffset = 4;
+
 
 // wifi
 char ssid[] = WIFI_SSID;            // your network SSID (name)
@@ -26,14 +32,24 @@ WiFiEspServer server(80);
 // fan
 word fanPin = 9;
 word fanTacho = 2; // only use 2, 3, 18, 19, 20 or 21 on arduino mega 2560
-float fanSpeed = 10;
-volatile byte half_revolutions;
+int fanSpeed = 15;
+volatile byte halfRevolutions;
 unsigned int rpm;
 unsigned long timeold;
 unsigned int fanOnTime = 5;
 unsigned int fanOffTime = 5;
 bool fanState = true;
 unsigned long fanStateTime;
+
+//fogger
+word fogger1Pin = 6;
+word fogger7Pin = 7;
+unsigned int foggerOffset = 60 * 1000;
+bool foggerState = true;
+
+//light
+word lightPin = 44;
+int lightDuty = 50;
 
 // tds/EC
 GravityTDS gravityTds;
@@ -58,11 +74,12 @@ void setup()
   pinMode(fanPin, OUTPUT);
   pinMode(fanTacho, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(fanTacho), rpm_fun, RISING);
-  half_revolutions = 0;
+  halfRevolutions = 0;
   rpm = 0;
   timeold = 0;
   fanStateTime = 0;
   pwm25kHzBegin();
+  fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed)
   pwmDuty((byte)fanSpeed);
 
   // initialize tds
@@ -70,6 +87,10 @@ void setup()
   gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
   gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
   gravityTds.begin();  //initialization
+
+  //initialize light
+  lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty)
+  analogWrite(lightPin, lightDuty * 255 / 100);
   
   // initialize ESP module
   WiFi.init(&Serial1);
@@ -110,12 +131,13 @@ void loop()
     //Deal with overflow after ~50 days
     fanStateTime = ms; 
   }
-  if (half_revolutions >= 20 || (ms - timeold) > 3000) { 
+  
+  if ( >= 20 || (ms - timeold) > 3000) { 
     //Update RPM every 20 counts, increase this for better RPM resolution,
     //decrease for faster update
-    rpm = 30*1000/(ms - timeold)*half_revolutions;
+    rpm = 30*1000/(ms - timeold)*halfRevolutions;
     timeold = ms;
-    half_revolutions = 0;
+    halfRevolutions = 0;
   }
 
   if (fanState && (ms - fanStateTime) > fanOnTime * 60000){
@@ -127,6 +149,17 @@ void loop()
     pwmDuty((byte)(fanSpeed / (100.0 / 79)));
     fanStateTime = ms;
   }
+
+  if (foggerState && fanstate && (ms - fanStateTime) > (fanOnTime * 60000 - foggerOffset)){
+    foggerState = false;
+    digitalWrite(fogger1Pin, LOW);
+    digitalWrite(fogger2Pin, LOW);
+  } else if(!foggerState && !fanstate && (ms - fanStateTime) > (fanOnTime * 60000 - foggerOffset)){
+    foggerState = true;
+    digitalWrite(fogger1Pin, HIGH);
+    digitalWrite(fogger2Pin, HIGH);
+  }
+  
   // listen for incoming clients
   WiFiEspClient client = server.available();
   if (client) {
@@ -167,11 +200,12 @@ void loop()
             char target[100];
             currentLine.toCharArray(target, 100);
             matchState.Target(target);
-            char result = matchState.Match("spd=([%d.]+)");
+            char result = matchState.Match("spd=([%d]+)");
             if (result == REGEXP_MATCHED){
               char buf [10];
               matchState.GetCapture (buf, 0);
-              fanSpeed = atof(buf);
+              fanSpeed = constrain(atoi(buf), 0, 100);
+              writeEEPROM(eepromStart + fanSpeedOffset, fanSpeed);
               Serial.print("Setting speed to: ");
               Serial.println(fanSpeed / (100.0 / 79));
               pwmDuty((byte)(fanSpeed / (100.0 / 79)));
@@ -191,6 +225,16 @@ void loop()
               fanOffTime = atoi(buf);
               Serial.print("Setting fanOffTime to: ");
               Serial.println(fanOffTime);
+            }
+            result = matchState.Match("light=(%d+)");
+            if (result == REGEXP_MATCHED){
+              char buf [3];
+              matchState.GetCapture (buf, 0);
+              lightDuty = constrain(atoi(buf), 0, 100);
+              writeEEPROM(eepromStart + lightDutyOffset, lightDuty);
+              analogWrite(lightPin, lightDuty * 255 / 100);
+              Serial.print("Setting light to: ");
+              Serial.println(lightDuty);
             }
 //            char result = matchState.Match("ec=(%d+)");
 //            if (result == REGEXP_MATCHED){
@@ -212,6 +256,21 @@ void loop()
     client.stop();
     Serial.println("Client disconnected");
   }
+}
+
+void writeEEPROM(int address, int value){
+  EEPROM.put(address, 1);
+  EEPROM.put(address+2, value);
+}
+
+int getEEPROM(int address, int default){
+  int set = 0;
+  EEPROM.get(address, set);
+  if (set != 1){
+    return default;
+  }
+  EEPROM.get(address+2, set);
+  return set;
 }
 
 void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue){
@@ -279,7 +338,7 @@ void pwmDuty(byte ocrb) {
 
 void rpm_fun()
 {
-  half_revolutions++;
+  halfRevolutions++;
   //Each rotation, this interrupt function is run twice
 }
 
