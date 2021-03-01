@@ -190,11 +190,22 @@ void loop()
         // so you can send a reply
         if (currentLine == "\r\n") {
           Serial.println("Sending response");
-
+          // turn off fogger
+          if (foggerState){            
+            digitalWrite(fogger1Pin, LOW);
+            digitalWrite(fogger2Pin, LOW);
+          }
+          delay(1);
           waterTemp = getTemp();
           gravityTds.setTemperature(waterTemp);
           gravityTds.update();
           tdsValue = gravityTds.getTdsValue();
+          // turn fogger back on
+          if (foggerState){            
+            digitalWrite(fogger1Pin, HIGH);
+            digitalWrite(fogger2Pin, HIGH);
+          }
+          
           
           //sendHttpResponse(client, waterTemp, tdsValue);
           sendJsonReponse(client, waterTemp, tdsValue);
