@@ -195,7 +195,7 @@ void loop()
             digitalWrite(fogger1Pin, LOW);
             digitalWrite(fogger2Pin, LOW);
           }
-          delay(1);
+          delay(100);
           waterTemp = getTemp();
           gravityTds.setTemperature(waterTemp);
           gravityTds.update();
