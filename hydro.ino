@@ -1,4 +1,5 @@
-#include <DHT22.h>
+//#include <DHT22.h>
+#include <DHT.h>
 
 #include "WiFiEsp.h"
 #include <OneWire.h>
@@ -15,6 +16,8 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 #endif
 
 #define TdsSensorPin A13
+#define DHT22_PIN 44
+#define DHTTYPE DHT22
 
 //EEPROM
 int eepromStart = 512;
@@ -46,6 +49,7 @@ word fogger1Pin = 6;
 word fogger2Pin = 7;
 unsigned int foggerOffset = 60;
 bool foggerState = true;
+int foggerSleepForMeasure = 1000;
 
 //light
 word lightPin = 44;
@@ -59,6 +63,13 @@ float tdsValue = 0;
 int DS18S20_Pin = 4; //DS18S20 Signal pin on digital 4
 OneWire ds(DS18S20_Pin);  // on digital pin 5
 float waterTemp = 0;
+
+// DHT22
+DHT myDHT22(DHT22_PIN, DHTTYPE);
+unsigned long dhtTime = 0;
+float dhtTemp = 0.0;
+float dhtHumidity = 0.0;
+
 
 // General
 MatchState matchState;
@@ -82,23 +93,31 @@ void setup()
   fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed);
   pwmDuty((byte)fanSpeed);
 
-  //turn on foggers
-  pinMode(fogger1Pin, OUTPUT);
-  pinMode(fogger2Pin, OUTPUT);
-  digitalWrite(fogger1Pin, HIGH);
-  digitalWrite(fogger2Pin, HIGH);
-
   // initialize tds
   gravityTds.setPin(TdsSensorPin);
   gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
   gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
   gravityTds.begin();  //initialization
 
+  //turn on foggers
+  waterTemp = getTemp();
+  gravityTds.setTemperature(waterTemp);
+  gravityTds.update();
+  tdsValue = gravityTds.getTdsValue();
+  delay(50);
+  pinMode(fogger1Pin, OUTPUT);
+  pinMode(fogger2Pin, OUTPUT);
+  digitalWrite(fogger1Pin, HIGH);
+  digitalWrite(fogger2Pin, HIGH);
+
+  //dht
+  myDHT22.begin();
+
   //initialize light
   lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty);
   pinMode(lightPin, OUTPUT);
   analogWrite(lightPin, lightDuty * 255 / 100);
-  
+
   // initialize ESP module
   WiFi.init(&Serial1);
 
@@ -119,70 +138,88 @@ void setup()
 
   Serial.println("You're connected to the network");
   printWifiStatus();
-  
+
   // start the web server on port 80
   server.begin();
 }
 
 
 void loop()
-{  
-  unsigned long ms = millis(); 
-  
-  if (ms < timeold){
+{
+  unsigned long ms = millis();
+
+  if (ms < timeold) {
     //Deal with overflow after ~50 days
-    timeold = ms; 
+    timeold = ms;
   }
-  
-  if (ms < fanStateTime){
+
+  if (ms < fanStateTime) {
     //Deal with overflow after ~50 days
-    fanStateTime = ms; 
+    fanStateTime = ms;
   }
-  
-  if (halfRevolutions >= 20 || (ms - timeold) > 3000) { 
+
+  if (halfRevolutions >= 20 || (ms - timeold) > 3000) {
     //Update RPM every 20 counts, increase this for better RPM resolution,
     //decrease for faster update
-    rpm = 30*1000/(ms - timeold)*halfRevolutions;
+    rpm = 30 * 1000 / (ms - timeold) * halfRevolutions;
     timeold = ms;
     halfRevolutions = 0;
   }
 
-  if (fanState && (ms - fanStateTime) > fanOnTime * 60000){
+  if (fanState && (ms - fanStateTime) > fanOnTime * 60000) {
     fanState = false;
     pwmDuty((byte)0);
     fanStateTime = ms;
-  } else if(!fanState && (ms - fanStateTime) > fanOffTime * 60000){
+  } else if (!fanState && (ms - fanStateTime) > fanOffTime * 60000) {
     fanState = true;
     pwmDuty((byte)(fanSpeed / (100.0 / 79)));
     fanStateTime = ms;
   }
 
-  if (foggerState && fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset*1000))){
+  if ((ms - dhtTime) > 2000) {
+    //getDHTReadings();
+    dhtHumidity = myDHT22.readHumidity();
+    if (isnan(dhtHumidity)){
+      dhtHumidity = -1;
+    }
+    dhtTemp = myDHT22.readTemperature();
+    if(isnan(dhtTemp)){
+      dhtTemp = -40;
+    }
+    dhtTime = ms;
+  }
+
+  if (foggerState && fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset * 1000))) {
     foggerState = false;
     digitalWrite(fogger1Pin, LOW);
     digitalWrite(fogger2Pin, LOW);
     Serial.println("Setting foggers to low");
-  } else if(!foggerState && !fanState && (ms - fanStateTime) > ((fanOffTime * 60000) - (foggerOffset*1000))){
+  } else if (!foggerState && !fanState && (ms - fanStateTime) > ((fanOffTime * 60000) - (foggerOffset * 1000))) {
     foggerState = true;
+    waterTemp = getTemp();
+    gravityTds.setTemperature(waterTemp);
+    gravityTds.update();
+    tdsValue = gravityTds.getTdsValue();
+    delay(50);
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
     Serial.println("Setting foggers to high");
   }
-  
+
   // listen for incoming clients
   WiFiEspClient client = server.available();
   if (client) {
     Serial.println("New client");
-    
+
     String currentLine = "";
 
     // an http request ends with a blank line
     boolean currentLineIsBlank = true;
-    
+
     while (client.connected()) {
       if (client.available()) {
         char c = client.read();
-        if (currentLine.length() < 20){
+        if (currentLine.length() < 20) {
           currentLine += c;
         }
         // if you've gotten to the end of the line (received a newline
@@ -190,23 +227,7 @@ void loop()
         // so you can send a reply
         if (currentLine == "\r\n") {
           Serial.println("Sending response");
-          // turn off fogger
-          if (foggerState){            
-            digitalWrite(fogger1Pin, LOW);
-            digitalWrite(fogger2Pin, LOW);
-          }
-          delay(100);
-          waterTemp = getTemp();
-          gravityTds.setTemperature(waterTemp);
-          gravityTds.update();
-          tdsValue = gravityTds.getTdsValue();
-          // turn fogger back on
-          if (foggerState){            
-            digitalWrite(fogger1Pin, HIGH);
-            digitalWrite(fogger2Pin, HIGH);
-          }
-          
-          
+
           //sendHttpResponse(client, waterTemp, tdsValue);
           sendJsonReponse(client, waterTemp, tdsValue);
           currentLine = "";
@@ -214,14 +235,14 @@ void loop()
         }
         Serial.print(c);
 
-        if (c == '\n'){
-          
+        if (c == '\n') {
+
           if (currentLine.startsWith("GET /?")) {
             char target[100];
             currentLine.toCharArray(target, 100);
             matchState.Target(target);
             char result = matchState.Match("spd=([%d]+)");
-            if (result == REGEXP_MATCHED){
+            if (result == REGEXP_MATCHED) {
               char buf [10];
               matchState.GetCapture (buf, 0);
               fanSpeed = constrain(atoi(buf), 0, 100);
@@ -231,7 +252,7 @@ void loop()
               pwmDuty((byte)(fanSpeed / (100.0 / 79)));
             }
             result = matchState.Match("fanOnTime=(%d+)");
-            if (result == REGEXP_MATCHED){
+            if (result == REGEXP_MATCHED) {
               char buf [3];
               matchState.GetCapture (buf, 0);
               fanOnTime = atoi(buf);
@@ -239,7 +260,7 @@ void loop()
               Serial.println(fanOnTime);
             }
             result = matchState.Match("fanOffTime=(%d+)");
-            if (result == REGEXP_MATCHED){
+            if (result == REGEXP_MATCHED) {
               char buf [3];
               matchState.GetCapture (buf, 0);
               fanOffTime = atoi(buf);
@@ -247,7 +268,7 @@ void loop()
               Serial.println(fanOffTime);
             }
             result = matchState.Match("light=(%d+)");
-            if (result == REGEXP_MATCHED){
+            if (result == REGEXP_MATCHED) {
               char buf [3];
               matchState.GetCapture (buf, 0);
               lightDuty = constrain(atoi(buf), 0, 100);
@@ -257,7 +278,7 @@ void loop()
               Serial.println(lightDuty);
             }
             result = matchState.Match("ec=(%d+)");
-            if (result == REGEXP_MATCHED){
+            if (result == REGEXP_MATCHED) {
               char buf [10];
               matchState.GetCapture (buf, 0);
               int measuredEc = atoi(buf);
@@ -268,7 +289,7 @@ void loop()
             }
           }
           currentLine = "";
-        }         
+        }
       }
     }
     // give the web browser time to receive the data
@@ -280,22 +301,22 @@ void loop()
   }
 }
 
-void writeEEPROM(int address, int value){
+void writeEEPROM(int address, int value) {
   EEPROM.put(address, 1);
-  EEPROM.put(address+2, value);
+  EEPROM.put(address + 2, value);
 }
 
-int getEEPROM(int address, int def){
+int getEEPROM(int address, int def) {
   int set = 0;
   EEPROM.get(address, set);
-  if (set != 1){
+  if (set != 1) {
     return def;
   }
-  EEPROM.get(address+2, set);
+  EEPROM.get(address + 2, set);
   return set;
 }
 
-void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue){
+void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue) {
   client.print(
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: application/json\r\n"
@@ -305,6 +326,10 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue){
   client.print(waterTemp);
   client.print(", \"ec\": ");
   client.print(2 * tdsValue);
+  client.print(", \"boxTemp\": ");
+  client.print(dhtTemp);
+  client.print(", \"boxHumidity\": ");
+  client.print(dhtHumidity);
   client.print(", \"fanSpeed\": ");
   client.print(fanSpeed);
   client.print(", \"rpm\": ");
@@ -316,7 +341,7 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue){
   client.print("}\r\n");
 }
 
-void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue){
+void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue) {
   // send a standard http response header
   // use \r\n instead of many println statements to speedup data send
   client.print(
@@ -364,31 +389,31 @@ void rpm_fun()
   //Each rotation, this interrupt function is run twice
 }
 
-float getTemp(){
+float getTemp() {
   //returns the temperature from one DS18S20 in DEG Celsius
 
   byte data[12];
   byte addr[8];
 
   if ( !ds.search(addr)) {
-      //no more sensors on chain, reset search
-      ds.reset_search();
-      return -1000;
+    //no more sensors on chain, reset search
+    ds.reset_search();
+    return -1000;
   }
 
   if ( OneWire::crc8( addr, 7) != addr[7]) {
-      Serial.println("CRC is not valid!");
-      return -1000;
+    Serial.println("CRC is not valid!");
+    return -1000;
   }
 
   if ( addr[0] != 0x10 && addr[0] != 0x28) {
-      Serial.print("Device is not recognized");
-      return -1000;
+    Serial.print("Device is not recognized");
+    return -1000;
   }
 
   ds.reset();
   ds.select(addr);
-  ds.write(0x44,1); // start conversion, with parasite power on at the end
+  ds.write(0x44, 1); // start conversion, with parasite power on at the end
 
   byte present = ds.reset();
   ds.select(addr);
@@ -411,6 +436,43 @@ float getTemp(){
 
 }
 
+//void getDHTReadings() {
+//  DHT22_ERROR_t errorCode;
+//  errorCode = myDHT22.readData();
+//  switch (errorCode)
+//  {
+//    case DHT_ERROR_NONE:
+//    case DHT_ERROR_CHECKSUM:
+//      dhtTemp = myDHT22.getTemperatureC();
+//      dhtHumidity = myDHT22.getHumidity();
+//      break;
+//    case DHT_BUS_HUNG:
+//      dhtTemp = -1;
+//      dhtHumidity = -1;
+//      break;
+//    case DHT_ERROR_NOT_PRESENT:
+//      dhtTemp = -2;
+//      dhtHumidity = -1;
+//      break;
+//    case DHT_ERROR_ACK_TOO_LONG:
+//      dhtTemp = -2;
+//      dhtHumidity = -1;
+//      break;
+//    case DHT_ERROR_SYNC_TIMEOUT:
+//      dhtTemp = -4;
+//      dhtHumidity = -1;
+//      break;
+//    case DHT_ERROR_DATA_TIMEOUT:
+//      dhtTemp = -5;
+//      dhtHumidity = -1;
+//      break;
+//    case DHT_ERROR_TOOQUICK:
+//      dhtTemp = -6;
+//      dhtHumidity = -1;
+//      break;
+//  }
+//}
+
 
 void printWifiStatus()
 {
@@ -422,7 +484,7 @@ void printWifiStatus()
   IPAddress ip = WiFi.localIP();
   Serial.print("IP Address: ");
   Serial.println(ip);
-  
+
   // print where to go in the browser
   Serial.println();
   Serial.print("To see this page in action, open a browser to http://");
