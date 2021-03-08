@@ -19,5 +19,5 @@ Default pins (On Arduino Mega 2560):
 - Fan pwm: 9
 - Fan tacho: 2
 - Water temp: 4
-- EC(TDS) pin: A1
+- EC(TDS) pin: A13
 - Wifi ESP: Serial1 (19(RX), 18(TX))
