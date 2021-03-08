@@ -23,6 +23,8 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 int eepromStart = 512;
 int fanSpeedOffset = 0;
 int lightDutyOffset = 4;
+int fogOnOffset = 8;
+int fogOffOffset = 12;
 
 
 // wifi
@@ -47,9 +49,11 @@ unsigned long fanStateTime;
 //fogger
 word fogger1Pin = 6;
 word fogger2Pin = 7;
-unsigned int foggerOffset = 60;
+//unsigned int foggerOffset = 60;
 bool foggerState = true;
-int foggerSleepForMeasure = 1000;
+unsigned long fogStateTime = 0;
+unsigned long fogOnTime = 60;
+unsigned long fogOffTime = 120;
 
 //light
 word lightPin = 44;
@@ -105,10 +109,13 @@ void setup()
   gravityTds.update();
   tdsValue = gravityTds.getTdsValue();
   delay(50);
+  fogOnTime = getEEPROM(eepromStart + fogOnOffset, fogOnTime);
+  fogOffTime = getEEPROM(eepromStart + fogOffOffset, fogOffTime);
   pinMode(fogger1Pin, OUTPUT);
   pinMode(fogger2Pin, OUTPUT);
   digitalWrite(fogger1Pin, HIGH);
   digitalWrite(fogger2Pin, HIGH);
+  foggerState = true;
 
   //dht
   myDHT22.begin();
@@ -166,15 +173,51 @@ void loop()
     halfRevolutions = 0;
   }
 
-  if (fanState && (ms - fanStateTime) > fanOnTime * 60000) {
-    fanState = false;
-    pwmDuty((byte)0);
-    fanStateTime = ms;
-  } else if (!fanState && (ms - fanStateTime) > fanOffTime * 60000) {
-    fanState = true;
-    pwmDuty((byte)(fanSpeed / (100.0 / 79)));
-    fanStateTime = ms;
+//  if (fanState && (ms - fanStateTime) > fanOnTime * 60000) {
+//    fanState = false;
+//    pwmDuty((byte)0);
+//    fanStateTime = ms;
+//  } else if (!fanState && (ms - fanStateTime) > fanOffTime * 60000) {
+//    fanState = true;
+//    pwmDuty((byte)(fanSpeed / (100.0 / 79)));
+//    fanStateTime = ms;
+//  }
+
+//  if (foggerState && fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset * 1000))) {
+//    foggerState = false;
+//    digitalWrite(fogger1Pin, LOW);
+//    digitalWrite(fogger2Pin, LOW);
+//    Serial.println("Setting foggers to low");
+//  } else if (!foggerState && !fanState && (ms - fanStateTime) > ((fanOffTime * 60000) - (foggerOffset * 1000))) {
+//    foggerState = true;
+//    waterTemp = getTemp();
+//    gravityTds.setTemperature(waterTemp);
+//    gravityTds.update();
+//    tdsValue = gravityTds.getTdsValue();
+//    delay(50);
+//    digitalWrite(fogger1Pin, HIGH);
+//    digitalWrite(fogger2Pin, HIGH);
+//    Serial.println("Setting foggers to high");
+//  }
+
+  if (foggerState && (ms - fogStateTime) > (fogOnTime * 1000)) {
+    foggerState = false;
+    digitalWrite(fogger1Pin, LOW);
+    digitalWrite(fogger2Pin, LOW);
+    fogStateTime = ms;
+  } else if (!foggerState && (ms - fogStateTime) > (fogOffTime * 1000)) {
+    foggerState = true;
+    waterTemp = getTemp();
+    gravityTds.setTemperature(waterTemp);
+    gravityTds.update();
+    tdsValue = gravityTds.getTdsValue();
+    delay(50);
+    digitalWrite(fogger1Pin, HIGH);
+    digitalWrite(fogger2Pin, HIGH);
+    fogStateTime = ms;
   }
+
+
 
   if ((ms - dhtTime) > 2000) {
     //getDHTReadings();
@@ -187,23 +230,6 @@ void loop()
       dhtTemp = -40;
     }
     dhtTime = ms;
-  }
-
-  if (foggerState && fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset * 1000))) {
-    foggerState = false;
-    digitalWrite(fogger1Pin, LOW);
-    digitalWrite(fogger2Pin, LOW);
-    Serial.println("Setting foggers to low");
-  } else if (!foggerState && !fanState && (ms - fanStateTime) > ((fanOffTime * 60000) - (foggerOffset * 1000))) {
-    foggerState = true;
-    waterTemp = getTemp();
-    gravityTds.setTemperature(waterTemp);
-    gravityTds.update();
-    tdsValue = gravityTds.getTdsValue();
-    delay(50);
-    digitalWrite(fogger1Pin, HIGH);
-    digitalWrite(fogger2Pin, HIGH);
-    Serial.println("Setting foggers to high");
   }
 
   // listen for incoming clients
@@ -241,6 +267,8 @@ void loop()
             char target[100];
             currentLine.toCharArray(target, 100);
             matchState.Target(target);
+
+            // fan speed
             char result = matchState.Match("spd=([%d]+)");
             if (result == REGEXP_MATCHED) {
               char buf [10];
@@ -251,6 +279,8 @@ void loop()
               Serial.println(fanSpeed / (100.0 / 79));
               pwmDuty((byte)(fanSpeed / (100.0 / 79)));
             }
+
+            //fan on/off
             result = matchState.Match("fanOnTime=(%d+)");
             if (result == REGEXP_MATCHED) {
               char buf [3];
@@ -267,6 +297,28 @@ void loop()
               Serial.print("Setting fanOffTime to: ");
               Serial.println(fanOffTime);
             }
+
+            //fogger on/off
+            result = matchState.Match("fogOnTime=(%d+)");
+            if (result == REGEXP_MATCHED) {
+              char buf [3];
+              matchState.GetCapture (buf, 0);
+              fogOnTime = atoi(buf);
+              writeEEPROM(eepromStart + fogOnOffset, fogOnTime);
+              Serial.print("Setting fogOnTime to: ");
+              Serial.println(fogOnTime);
+            }
+            result = matchState.Match("fogOffTime=(%d+)");
+            if (result == REGEXP_MATCHED) {
+              char buf [3];
+              matchState.GetCapture (buf, 0);
+              fogOffTime = atoi(buf);
+              writeEEPROM(eepromStart + fogOffOffset, fogOffTime);
+              Serial.print("Setting fogOffTime to: ");
+              Serial.println(fogOffTime);
+            }
+
+            //light dimming
             result = matchState.Match("light=(%d+)");
             if (result == REGEXP_MATCHED) {
               char buf [3];
@@ -277,6 +329,8 @@ void loop()
               Serial.print("Setting light to: ");
               Serial.println(lightDuty);
             }
+
+            //ec calibration
             result = matchState.Match("ec=(%d+)");
             if (result == REGEXP_MATCHED) {
               char buf [10];
@@ -338,6 +392,12 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue) {
   client.print(fanOnTime);
   client.print(", \"fanOffTime\": ");
   client.print(fanOffTime);
+  client.print(", \"fogOnTime\": ");
+  client.print(fogOnTime);
+  client.print(", \"fogOffTime\": ");
+  client.print(fogOffTime);
+  client.print(", \"foggerState\": ");
+  client.print(foggerState);
   client.print("}\r\n");
 }
 
