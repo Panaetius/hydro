@@ -1,3 +1,4 @@
+
 //#include <DHT22.h>
 #include <DHT.h>
 
@@ -5,6 +6,7 @@
 #include <OneWire.h>
 #include <EEPROM.h>
 #include "GravityTDS.h"
+#include "DFRobot_PH.h"
 #include <Regexp.h>
 
 #include "arduino_secrets.h"
@@ -16,6 +18,7 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 #endif
 
 #define TdsSensorPin A13
+#define PhSensorPin A1
 #define DHT22_PIN 44
 #define DHTTYPE DHT22
 
@@ -67,6 +70,10 @@ float tdsValue = 0;
 int DS18S20_Pin = 4; //DS18S20 Signal pin on digital 4
 OneWire ds(DS18S20_Pin);  // on digital pin 5
 float waterTemp = 0;
+// ph
+DFRobot_PH ph;
+float phVoltage,phValue,phVoltageCorrected;
+
 
 // DHT22
 DHT myDHT22(DHT22_PIN, DHTTYPE);
@@ -211,6 +218,11 @@ void loop()
     gravityTds.setTemperature(waterTemp);
     gravityTds.update();
     tdsValue = gravityTds.getTdsValue();
+    
+    phVoltage = analogRead(PhSensorPin);
+    phVoltageCorrected = phVoltage/1024.0*5000;  // read the voltage
+    phValue = ph.readPH(phVoltageCorrected,waterTemp);  // convert voltage to pH with temperature compensation
+    
     delay(50);
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
@@ -253,9 +265,8 @@ void loop()
         // so you can send a reply
         if (currentLine == "\r\n") {
           Serial.println("Sending response");
-
           //sendHttpResponse(client, waterTemp, tdsValue);
-          sendJsonReponse(client, waterTemp, tdsValue);
+          sendJsonReponse(client, waterTemp, tdsValue, phValue);
           currentLine = "";
           break;
         }
@@ -370,7 +381,7 @@ int getEEPROM(int address, int def) {
   return set;
 }
 
-void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue) {
+void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue, float phValue){
   client.print(
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: application/json\r\n"
@@ -378,6 +389,8 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue) {
     "\r\n");
   client.print("{\"waterTemp\": ");
   client.print(waterTemp);
+  client.print(", \"ph\": ");
+  client.print(phValue);
   client.print(", \"ec\": ");
   client.print(2 * tdsValue);
   client.print(", \"boxTemp\": ");
@@ -401,7 +414,7 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue) {
   client.print("}\r\n");
 }
 
-void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue) {
+void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue, float phValue){
   // send a standard http response header
   // use \r\n instead of many println statements to speedup data send
   client.print(
@@ -414,7 +427,9 @@ void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue) {
   client.print("<h1>Hydroponic Control!</h1>\r\n");
   client.print("<br><b>Water Temperature: </b>");
   client.print(waterTemp);
-  client.print("&deg;C<br><b>EC: </b>");
+  client.print("&deg;C<br><b>PH: </b>");
+  client.print(phValue);
+  client.print("<br><b>EC: </b>");
   client.print(2 * tdsValue);
   client.print("&micro;S<br><b>Fan RPM: </b>");
   client.print(rpm);
