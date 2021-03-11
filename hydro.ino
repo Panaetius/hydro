@@ -18,6 +18,7 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 #endif
 
 #define TdsSensorPin A13
+#define TdsPowerPin 45
 #define PhSensorPin A1
 #define DHT22_PIN 44
 #define DHTTYPE DHT22
@@ -105,6 +106,9 @@ void setup()
   pwmDuty((byte)fanSpeed);
 
   // initialize tds
+  pinMode(TdsPowerPin, OUTPUT);
+  digitalWrite(TdsPowerPin, HIGH);
+  delay(50);
   gravityTds.setPin(TdsSensorPin);
   gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
   gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
@@ -114,7 +118,8 @@ void setup()
   waterTemp = getTemp();
   gravityTds.setTemperature(waterTemp);
   gravityTds.update();
-  tdsValue = gravityTds.getTdsValue();
+  tdsValue = gravityTds.getTdsValue();  
+  digitalWrite(TdsPowerPin, LOW);
   delay(50);
   fogOnTime = getEEPROM(eepromStart + fogOnOffset, fogOnTime);
   fogOffTime = getEEPROM(eepromStart + fogOffOffset, fogOffTime);
@@ -214,6 +219,9 @@ void loop()
     fogStateTime = ms;
   } else if (!foggerState && (ms - fogStateTime) > (fogOffTime * 1000)) {
     foggerState = true;
+    
+    digitalWrite(TdsPowerPin, HIGH);
+    delay(50);
     waterTemp = getTemp();
     gravityTds.setTemperature(waterTemp);
     gravityTds.update();
@@ -222,7 +230,7 @@ void loop()
     phVoltage = analogRead(PhSensorPin);
     phVoltageCorrected = phVoltage/1024.0*5000;  // read the voltage
     phValue = ph.readPH(phVoltageCorrected,waterTemp);  // convert voltage to pH with temperature compensation
-    
+    digitalWrite(TdsPowerPin, LOW);
     delay(50);
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
