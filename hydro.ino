@@ -5,7 +5,7 @@
 #include "WiFiEsp.h"
 #include <OneWire.h>
 #include <EEPROM.h>
-#include "GravityTDS.h"
+//#include "GravityTDS.h"
 #include "DFRobot_PH.h"
 #include <Regexp.h>
 
@@ -64,8 +64,9 @@ word lightPin = 44;
 int lightDuty = 50;
 
 // tds/EC
-GravityTDS gravityTds;
-float tdsValue = 0;
+//GravityTDS gravityTds;
+float ecValue = 0;
+float ecSum = 0;
 
 // water temp
 int DS18S20_Pin = 4; //DS18S20 Signal pin on digital 4
@@ -109,18 +110,23 @@ void setup()
   pinMode(TdsPowerPin, OUTPUT);
   digitalWrite(TdsPowerPin, HIGH);
   delay(50);
-  gravityTds.setPin(TdsSensorPin);
-  gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
-  gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
-  gravityTds.begin();  //initialization
+//  gravityTds.setPin(TdsSensorPin);
+//  gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
+//  gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
+//  gravityTds.begin();  //initialization
+  pinMode(TdsSensorPin, INPUT);
+  pinMode(PhSensorPin, INPUT);
 
   //turn on foggers
   waterTemp = getTemp();
-  gravityTds.setTemperature(waterTemp);
-  gravityTds.update();
-  tdsValue = gravityTds.getTdsValue();  
+  ecValue = getEc(waterTemp); 
   digitalWrite(TdsPowerPin, LOW);
   delay(50);
+  delay(50);
+  phVoltage = analogRead(PhSensorPin);
+  phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
+  phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
+    
   fogOnTime = getEEPROM(eepromStart + fogOnOffset, fogOnTime);
   fogOffTime = getEEPROM(eepromStart + fogOffOffset, fogOffTime);
   pinMode(fogger1Pin, OUTPUT);
@@ -185,33 +191,6 @@ void loop()
     halfRevolutions = 0;
   }
 
-//  if (fanState && (ms - fanStateTime) > fanOnTime * 60000) {
-//    fanState = false;
-//    pwmDuty((byte)0);
-//    fanStateTime = ms;
-//  } else if (!fanState && (ms - fanStateTime) > fanOffTime * 60000) {
-//    fanState = true;
-//    pwmDuty((byte)(fanSpeed / (100.0 / 79)));
-//    fanStateTime = ms;
-//  }
-
-//  if (foggerState && fanState && (ms - fanStateTime) > ((fanOnTime * 60000) - (foggerOffset * 1000))) {
-//    foggerState = false;
-//    digitalWrite(fogger1Pin, LOW);
-//    digitalWrite(fogger2Pin, LOW);
-//    Serial.println("Setting foggers to low");
-//  } else if (!foggerState && !fanState && (ms - fanStateTime) > ((fanOffTime * 60000) - (foggerOffset * 1000))) {
-//    foggerState = true;
-//    waterTemp = getTemp();
-//    gravityTds.setTemperature(waterTemp);
-//    gravityTds.update();
-//    tdsValue = gravityTds.getTdsValue();
-//    delay(50);
-//    digitalWrite(fogger1Pin, HIGH);
-//    digitalWrite(fogger2Pin, HIGH);
-//    Serial.println("Setting foggers to high");
-//  }
-
   if (foggerState && (ms - fogStateTime) > (fogOnTime * 1000)) {
     foggerState = false;
     digitalWrite(fogger1Pin, LOW);
@@ -220,17 +199,16 @@ void loop()
   } else if (!foggerState && (ms - fogStateTime) > (fogOffTime * 1000)) {
     foggerState = true;
     
+    waterTemp = getTemp();
+    
     digitalWrite(TdsPowerPin, HIGH);
     delay(50);
-    waterTemp = getTemp();
-    gravityTds.setTemperature(waterTemp);
-    gravityTds.update();
-    tdsValue = gravityTds.getTdsValue();
-    
-    phVoltage = analogRead(PhSensorPin);
-    phVoltageCorrected = phVoltage/1024.0*5000;  // read the voltage
-    phValue = ph.readPH(phVoltageCorrected,waterTemp);  // convert voltage to pH with temperature compensation
+    ecValue = getEc(waterTemp);
     digitalWrite(TdsPowerPin, LOW);
+    delay(50);
+    phVoltage = analogRead(PhSensorPin);
+    phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
+    phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
     delay(50);
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
@@ -274,7 +252,7 @@ void loop()
         if (currentLine == "\r\n") {
           Serial.println("Sending response");
           //sendHttpResponse(client, waterTemp, tdsValue);
-          sendJsonReponse(client, waterTemp, tdsValue, phValue);
+          sendJsonReponse(client, waterTemp, ecValue, phValue);
           currentLine = "";
           break;
         }
@@ -352,11 +330,11 @@ void loop()
             //ec calibration
             result = matchState.Match("ec=(%d+)");
             if (result == REGEXP_MATCHED) {
+              // TODO: implement this properly
               char buf [10];
               matchState.GetCapture (buf, 0);
               int measuredEc = atoi(buf);
               waterTemp = getTemp();
-              gravityTds.setEcValue((float)measuredEc, waterTemp);
               Serial.print("Setting ec to: ");
               Serial.println(measuredEc);
             }
@@ -389,7 +367,7 @@ int getEEPROM(int address, int def) {
   return set;
 }
 
-void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue, float phValue){
+void sendJsonReponse(WiFiEspClient client, float waterTemp, float ecValue, float phValue){
   client.print(
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: application/json\r\n"
@@ -400,7 +378,7 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue, floa
   client.print(", \"ph\": ");
   client.print(phValue);
   client.print(", \"ec\": ");
-  client.print(2 * tdsValue);
+  client.print(ecValue);
   client.print(", \"boxTemp\": ");
   client.print(dhtTemp);
   client.print(", \"boxHumidity\": ");
@@ -422,7 +400,7 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float tdsValue, floa
   client.print("}\r\n");
 }
 
-void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue, float phValue){
+void sendHttpResponse(WiFiEspClient client, float waterTemp, float ecValue, float phValue){
   // send a standard http response header
   // use \r\n instead of many println statements to speedup data send
   client.print(
@@ -438,7 +416,7 @@ void sendHttpResponse(WiFiEspClient client, float waterTemp, float tdsValue, flo
   client.print("&deg;C<br><b>PH: </b>");
   client.print(phValue);
   client.print("<br><b>EC: </b>");
-  client.print(2 * tdsValue);
+  client.print(ecValue);
   client.print("&micro;S<br><b>Fan RPM: </b>");
   client.print(rpm);
   client.print("<br><br><form >\r\n");
@@ -517,6 +495,18 @@ float getTemp() {
 
   return TemperatureSum;
 
+}
+
+float getEc(float waterTemp){
+  ecSum = 0;
+  for (int x = 0; x < 10; x++){
+    ecSum += analogRead(TdsSensorPin);
+    delay(40);
+  }
+  float averageVoltage = (ecSum / 10) * 5.0 / 1024.0;
+
+  float compensatedVoltage = averageVoltage / (1.0 + 0.02 * (waterTemp - 25.0)); //temperature compensation
+  return (133.42 * compensatedVoltage * compensatedVoltage * compensatedVoltage - 255.86 * compensatedVoltage * compensatedVoltage + 857.39 * compensatedVoltage);
 }
 
 //void getDHTReadings() {
