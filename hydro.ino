@@ -20,7 +20,8 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 #define TdsSensorPin A13
 #define TdsPowerPin 45
 #define PhSensorPin A1
-#define DHT22_PIN 44
+#define DHT22_INSIDE_BOX_PIN 44
+#define DHT22_OUTSIDE_BOX_PIN 43
 #define DHTTYPE DHT22
 
 //EEPROM
@@ -78,10 +79,14 @@ float phVoltage,phValue,phVoltageCorrected;
 
 
 // DHT22
-DHT myDHT22(DHT22_PIN, DHTTYPE);
+DHT myDHT22InSideBox(DHT22_INSIDE_BOX_PIN, DHTTYPE);
 unsigned long dhtTime = 0;
-float dhtTemp = 0.0;
-float dhtHumidity = 0.0;
+float dhtInSideBoxTemp = 0.0;
+float dhtInSideBoxHumidity = 0.0;
+
+DHT myDHT22OutSideBox(DHT22_OUTSIDE_BOX_PIN, DHTTYPE);
+float dhtOutSideBoxTemp = 0.0;
+float dhtOutSideBoxHumidity = 0.0;
 
 
 // General
@@ -136,7 +141,8 @@ void setup()
   foggerState = true;
 
   //dht
-  myDHT22.begin();
+  myDHT22InSideBox.begin();
+  myDHT22OutSideBox.begin();
 
   //initialize light
   lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty);
@@ -219,14 +225,26 @@ void loop()
 
   if ((ms - dhtTime) > 2000) {
     //getDHTReadings();
-    dhtHumidity = myDHT22.readHumidity();
-    if (isnan(dhtHumidity)){
-      dhtHumidity = -1;
+    dhtInSideBoxHumidity = myDHT22InSideBox.readHumidity();
+    if (isnan(dhtInSideBoxHumidity)){
+      dhtInSideBoxHumidity = -1;
     }
-    dhtTemp = myDHT22.readTemperature();
-    if(isnan(dhtTemp)){
-      dhtTemp = -40;
+    dhtInSideBoxTemp = myDHT22InSideBox.readTemperature();
+    if(isnan(dhtInSideBoxTemp)){
+      dhtInSideBoxTemp = -40;
     }
+
+    dhtOutSideBoxHumidity = myDHT22OutSideBox.readHumidity();
+    if (isnan(dhtOutSideBoxHumidity)){
+      dhtOutSideBoxHumidity = -1;
+    }
+
+    dhtOutSideBoxTemp = myDHT22OutSideBox.readTemperature();
+    if(isnan(dhtOutSideBoxTemp)){
+      dhtOutSideBoxTemp = -40;
+    }
+
+
     dhtTime = ms;
   }
 
@@ -379,10 +397,15 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float ecValue, float
   client.print(phValue);
   client.print(", \"ec\": ");
   client.print(ecValue);
-  client.print(", \"boxTemp\": ");
-  client.print(dhtTemp);
-  client.print(", \"boxHumidity\": ");
-  client.print(dhtHumidity);
+  client.print(", \"inSideBoxTemp\": ");
+  client.print(dhtInSideBoxTemp);
+  client.print(", \"inSideBoxHumidity\": ");
+  client.print(dhtInSideBoxHumidity);
+    client.print(", \"outSideBoxTemp\": ");
+  client.print(dhtOutSideBoxTemp);
+  client.print(", \"outSideBoxHumidity\": ");
+  client.print(dhtOutSideBoxHumidity);
+
   client.print(", \"fanSpeed\": ");
   client.print(fanSpeed);
   client.print(", \"rpm\": ");
@@ -511,37 +534,37 @@ float getEc(float waterTemp){
 
 //void getDHTReadings() {
 //  DHT22_ERROR_t errorCode;
-//  errorCode = myDHT22.readData();
+//  errorCode = myDHT22InSideBox.readData();
 //  switch (errorCode)
 //  {
 //    case DHT_ERROR_NONE:
 //    case DHT_ERROR_CHECKSUM:
-//      dhtTemp = myDHT22.getTemperatureC();
-//      dhtHumidity = myDHT22.getHumidity();
+//      dhtInSideBoxTemp = myDHT22InSideBox.getTemperatureC();
+//      dhtInSideBoxHumidity = myDHT22InSideBox.getHumidity();
 //      break;
 //    case DHT_BUS_HUNG:
-//      dhtTemp = -1;
-//      dhtHumidity = -1;
+//      dhtInSideBoxTemp = -1;
+//      dhtInSideBoxHumidity = -1;
 //      break;
 //    case DHT_ERROR_NOT_PRESENT:
-//      dhtTemp = -2;
-//      dhtHumidity = -1;
+//      dhtInSideBoxTemp = -2;
+//      dhtInSideBoxHumidity = -1;
 //      break;
 //    case DHT_ERROR_ACK_TOO_LONG:
-//      dhtTemp = -2;
-//      dhtHumidity = -1;
+//      dhtInSideBoxTemp = -2;
+//      dhtInSideBoxHumidity = -1;
 //      break;
 //    case DHT_ERROR_SYNC_TIMEOUT:
-//      dhtTemp = -4;
-//      dhtHumidity = -1;
+//      dhtInSideBoxTemp = -4;
+//      dhtInSideBoxHumidity = -1;
 //      break;
 //    case DHT_ERROR_DATA_TIMEOUT:
-//      dhtTemp = -5;
-//      dhtHumidity = -1;
+//      dhtInSideBoxTemp = -5;
+//      dhtInSideBoxHumidity = -1;
 //      break;
 //    case DHT_ERROR_TOOQUICK:
-//      dhtTemp = -6;
-//      dhtHumidity = -1;
+//      dhtInSideBoxTemp = -6;
+//      dhtInSideBoxHumidity = -1;
 //      break;
 //  }
 //}
