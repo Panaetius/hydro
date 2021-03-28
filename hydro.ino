@@ -60,7 +60,7 @@ unsigned long fogOnTime = 60;
 unsigned long fogOffTime = 120;
 
 //light
-word lightPin = 44;
+word lightPin = 43;
 int lightDuty = 50;
 
 // tds/EC
