@@ -8,6 +8,8 @@
 //#include "GravityTDS.h"
 #include "DFRobot_PH.h"
 #include <Regexp.h>
+#define USE_TIMER_5     true
+#include "TimerInterrupt.h"
 
 #include "arduino_secrets.h"
 
@@ -17,11 +19,30 @@
 SoftwareSerial Serial1(6, 7); // RX, TX
 #endif
 
-#define TdsSensorPin A13
+#define TdsSensorPin A12
 #define TdsPowerPin 45
 #define PhSensorPin A1
 #define DHT22_PIN 44
 #define DHTTYPE DHT22
+#define phUpPin 26
+#define phDownPin 27
+#define fert1Pin 28
+#define fert2Pin 29
+#define fert3Pin 30
+
+// pump timing
+float mltos = 0.9325;
+long waitBeforeNewAdjustment = 10 * 60 * 1000l;
+long lastAdjustment = 0;
+bool adjustmentActive = false;
+float phUpMl = 1.0;
+float phDownMl = 1.0;
+float fert1Ml = 3.0;
+float fert2Ml = 1.5;
+float fert3Ml = 0.75;
+float phMin = 5.8;
+float phMax = 6.5;
+float ecMin = 1500.0;
 
 //EEPROM
 int eepromStart = 512;
@@ -35,6 +56,7 @@ int fogOffOffset = 12;
 char ssid[] = WIFI_SSID;            // your network SSID (name)
 char pass[] = WIFI_PASSWD;        // your network password
 int status = WL_IDLE_STATUS;     // the Wifi radio's status
+long lastWifiStateCheck = 0;
 
 WiFiEspServer server(80);
 
@@ -94,6 +116,8 @@ void setup()
   // initialize serial for ESP module
   Serial1.begin(115200);
 
+  ITimer5.init();
+
   // initialize fan
   pinMode(fanPin, OUTPUT);
   pinMode(fanTacho, INPUT_PULLUP);
@@ -106,6 +130,15 @@ void setup()
   fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed);
   pwmDuty((byte)fanSpeed);
 
+
+  pinMode(PhSensorPin, INPUT);  
+  waterTemp = getTemp();
+  
+  phVoltage = analogRead(PhSensorPin);
+  phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
+  phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
+  delay(50);
+
   // initialize tds
   pinMode(TdsPowerPin, OUTPUT);
   digitalWrite(TdsPowerPin, HIGH);
@@ -115,17 +148,11 @@ void setup()
 //  gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
 //  gravityTds.begin();  //initialization
   pinMode(TdsSensorPin, INPUT);
-  pinMode(PhSensorPin, INPUT);
 
   //turn on foggers
-  waterTemp = getTemp();
   ecValue = getEc(waterTemp); 
   digitalWrite(TdsPowerPin, LOW);
-  delay(50);
-  delay(50);
-  phVoltage = analogRead(PhSensorPin);
-  phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
-  phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
+  delay(100);
     
   fogOnTime = getEEPROM(eepromStart + fogOnOffset, fogOnTime);
   fogOffTime = getEEPROM(eepromStart + fogOffOffset, fogOffTime);
@@ -171,11 +198,16 @@ void setup()
 
 void loop()
 {
+  
   unsigned long ms = millis();
 
   if (ms < timeold) {
     //Deal with overflow after ~50 days
     timeold = ms;
+  }
+
+  if (ms < lastWifiStateCheck){
+    lastWifiStateCheck = ms;
   }
 
   if (ms < fanStateTime) {
@@ -200,19 +232,23 @@ void loop()
     foggerState = true;
     
     waterTemp = getTemp();
+
+    phVoltage = analogRead(PhSensorPin);
+    phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
+    phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
+    delay(50);
     
     digitalWrite(TdsPowerPin, HIGH);
     delay(50);
     ecValue = getEc(waterTemp);
     digitalWrite(TdsPowerPin, LOW);
-    delay(50);
-    phVoltage = analogRead(PhSensorPin);
-    phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
-    phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
-    delay(50);
+    delay(100);
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
     fogStateTime = ms;
+    if (!adjustmentActive && (ms - lastAdjustment) > waitBeforeNewAdjustment){
+      adjustSolution(phValue, ecValue);
+    }
   }
 
 
@@ -349,6 +385,29 @@ void loop()
     // close the connection:
     client.stop();
     Serial.println("Client disconnected");
+    delay(100);
+  } else {
+    
+    // attempt to reconnect to WiFi network
+    if ((ms - lastWifiStateCheck) > 10000){
+      status = WiFi.status();
+      if (status != 1){
+        Serial.println(status);
+      }
+      if (status != WL_CONNECTED){
+        if ( status == WL_DISCONNECTED) {
+          Serial.print("Attempting to connect to WPA SSID: ");
+          Serial.println(ssid);
+          // Connect to WPA/WPA2 network
+          status = WiFi.begin(ssid, pass);
+          if ( status != WL_DISCONNECTED) {
+            Serial.println("starting server");
+            server.begin();  
+          }   
+        }  
+      }
+      lastWifiStateCheck = ms;
+    }
   }
 }
 
@@ -505,8 +564,46 @@ float getEc(float waterTemp){
   }
   float averageVoltage = (ecSum / 10) * 5.0 / 1024.0;
 
-  float compensatedVoltage = averageVoltage / (1.0 + 0.02 * (waterTemp - 25.0)); //temperature compensation
-  return (133.42 * compensatedVoltage * compensatedVoltage * compensatedVoltage - 255.86 * compensatedVoltage * compensatedVoltage + 857.39 * compensatedVoltage);
+  //float compensatedVoltage = averageVoltage / (1.0 + 0.02 * (waterTemp - 25.0)); //temperature compensation
+  return (133.42 * averageVoltage * averageVoltage * averageVoltage - 255.86 * averageVoltage * averageVoltage + 857.39 * averageVoltage) / (1.0 + 0.02 * (waterTemp - 25.0));
+}
+
+void adjustSolution(float phValue, float ecValue){
+  long pumpTime;
+  if(phValue < phMin){
+    pumpTime = (long)mltos * phUpMl;
+    digitalWrite(phUpPin, HIGH);
+    ITimer5.attachInterruptInterval(pumpTime, stopPump, phUpPin, pumpTime);
+    adjustmentActive = true;
+    return;
+  }
+  if(phValue > phMax){
+    pumpTime = (long)mltos * phDownMl;
+    digitalWrite(phDownPin, HIGH);
+    ITimer5.attachInterruptInterval(pumpTime, stopPump, phDownPin, pumpTime);
+    adjustmentActive = true;
+    return;
+  }
+  if(ecValue < ecMin){
+    pumpTime = (long)mltos * fert1Ml;
+    digitalWrite(fert1Pin, HIGH);
+    ITimer5.attachInterruptInterval(pumpTime, stopPump, fert1Pin, pumpTime);
+    pumpTime = (long)mltos * fert2Ml;
+    digitalWrite(fert2Pin, HIGH);
+    ITimer5.attachInterruptInterval(pumpTime, stopPump, fert2Pin, pumpTime);
+    pumpTime = (long)mltos * fert3Ml;
+    digitalWrite(fert3Pin, HIGH);
+    ITimer5.attachInterruptInterval(pumpTime, stopPump, fert3Pin, pumpTime);
+    adjustmentActive = true;
+    return;
+  }
+}
+
+void stopPump(int pumpPin){
+  digitalWrite(pumpPin, LOW);
+  adjustmentActive = false;
+  lastAdjustment = millis();
+  
 }
 
 //void getDHTReadings() {

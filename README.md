@@ -8,6 +8,7 @@ OneWire
 WiFiEsp
 GravityTDS
 Regexp
+TimerInterrupt
 
 For wiring, see:
 - https://wiki.dfrobot.com/Gravity__Analog_TDS_Sensor___Meter_For_Arduino_SKU__SEN0244
