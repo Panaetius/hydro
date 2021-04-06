@@ -10,6 +10,7 @@
 #include <Regexp.h>
 #define USE_TIMER_5     true
 #include "TimerInterrupt.h"
+#include "ISR_Timer.h"
 
 #include "arduino_secrets.h"
 
@@ -24,11 +25,6 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 #define PhSensorPin A1
 #define DHT22_PIN 44
 #define DHTTYPE DHT22
-#define phUpPin 26
-#define phDownPin 27
-#define fert1Pin 28
-#define fert2Pin 29
-#define fert3Pin 30
 
 // pump timing
 float mltos = 0.9325;
@@ -43,6 +39,16 @@ float fert3Ml = 0.75;
 float phMin = 5.8;
 float phMax = 6.5;
 float ecMin = 1500.0;
+long lastPhAdjustment = 0;
+long lastFertAdjustment = 0;
+ISR_Timer ISR_Timer5;
+
+int phUpPin = 26;
+int phDownPin = 27;
+int fert1Pin = 28;
+int fert2Pin = 29;
+int fert3Pin = 30;
+
 
 //EEPROM
 int eepromStart = 512;
@@ -50,6 +56,7 @@ int fanSpeedOffset = 0;
 int lightDutyOffset = 4;
 int fogOnOffset = 8;
 int fogOffOffset = 12;
+int ecMinOffset = 16;
 
 
 // wifi
@@ -116,7 +123,15 @@ void setup()
   // initialize serial for ESP module
   Serial1.begin(115200);
 
+  //pumps
   ITimer5.init();
+  ITimer5.attachInterruptInterval(10, TimerHandler);
+  pinMode(phUpPin, OUTPUT);
+  pinMode(phDownPin, OUTPUT);
+  pinMode(fert1Pin, OUTPUT);
+  pinMode(fert2Pin, OUTPUT);
+  pinMode(fert3Pin, OUTPUT);
+  ecMin = getEEPROM(eepromStart + ecMinOffset, ecMin);
 
   // initialize fan
   pinMode(fanPin, OUTPUT);
@@ -204,6 +219,7 @@ void loop()
   if (ms < timeold) {
     //Deal with overflow after ~50 days
     timeold = ms;
+    lastAdjustment = ms;
   }
 
   if (ms < lastWifiStateCheck){
@@ -246,7 +262,10 @@ void loop()
     digitalWrite(fogger1Pin, HIGH);
     digitalWrite(fogger2Pin, HIGH);
     fogStateTime = ms;
+    Serial.println(adjustmentActive);
+    Serial.println(ms - lastAdjustment);
     if (!adjustmentActive && (ms - lastAdjustment) > waitBeforeNewAdjustment){
+      Serial.println("Checking parameters");
       adjustSolution(phValue, ecValue);
     }
   }
@@ -363,16 +382,28 @@ void loop()
               Serial.println(lightDuty);
             }
 
-            //ec calibration
-            result = matchState.Match("ec=(%d+)");
+//            //ec calibration
+//            result = matchState.Match("calibrateec=(%d+)");
+//            if (result == REGEXP_MATCHED) {
+//              // TODO: implement this properly
+//              char buf [10];
+//              matchState.GetCapture (buf, 0);
+//              int measuredEc = atoi(buf);
+//              waterTemp = getTemp();
+//              Serial.print("Setting ec to: ");
+//              Serial.println(measuredEc);
+//            }
+
+            //ec target
+            result = matchState.Match("ecmin=(%d+)");
             if (result == REGEXP_MATCHED) {
               // TODO: implement this properly
               char buf [10];
               matchState.GetCapture (buf, 0);
-              int measuredEc = atoi(buf);
-              waterTemp = getTemp();
-              Serial.print("Setting ec to: ");
-              Serial.println(measuredEc);
+              ecMin = atoi(buf);
+              writeEEPROM(eepromStart + ecMinOffset, ecMin);
+              Serial.print("Setting min ec to: ");
+              Serial.println(ecMin);
             }
           }
           currentLine = "";
@@ -456,6 +487,10 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float ecValue, float
   client.print(fogOffTime);
   client.print(", \"foggerState\": ");
   client.print(foggerState);
+  client.print(", \"lastPhAdjustment\": ");
+  client.print(lastPhAdjustment);
+  client.print(", \"lastFertAdjustment\": ");
+  client.print(lastFertAdjustment);
   client.print("}\r\n");
 }
 
@@ -571,37 +606,56 @@ float getEc(float waterTemp){
 void adjustSolution(float phValue, float ecValue){
   long pumpTime;
   if(phValue < phMin){
-    pumpTime = (long)mltos * phUpMl;
+    Serial.println("Increasing ph");
+    pumpTime = (long)(mltos * phUpMl * 1000.0);
+    Serial.println(pumpTime);
     digitalWrite(phUpPin, HIGH);
-    ITimer5.attachInterruptInterval(pumpTime, stopPump, phUpPin, pumpTime);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &phUpPin);
     adjustmentActive = true;
+    lastPhAdjustment = millis();
     return;
   }
   if(phValue > phMax){
-    pumpTime = (long)mltos * phDownMl;
+    Serial.println("Decreasing ph");
+    pumpTime = (long)(mltos * phDownMl * 1000.0);
+    Serial.println(pumpTime);
     digitalWrite(phDownPin, HIGH);
-    ITimer5.attachInterruptInterval(pumpTime, stopPump, phDownPin, pumpTime);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &phDownPin);
     adjustmentActive = true;
+    lastPhAdjustment = millis();
     return;
   }
   if(ecValue < ecMin){
-    pumpTime = (long)mltos * fert1Ml;
+    Serial.println("Increasing fertilizer");
+    pumpTime = (long)(mltos * fert1Ml * 1000.0);
+    Serial.println(millis());
+    Serial.println(pumpTime);
     digitalWrite(fert1Pin, HIGH);
-    ITimer5.attachInterruptInterval(pumpTime, stopPump, fert1Pin, pumpTime);
-    pumpTime = (long)mltos * fert2Ml;
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &fert1Pin);
+    pumpTime = (long)(mltos * fert2Ml * 1000.0);
     digitalWrite(fert2Pin, HIGH);
-    ITimer5.attachInterruptInterval(pumpTime, stopPump, fert2Pin, pumpTime);
-    pumpTime = (long)mltos * fert3Ml;
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &fert2Pin);
+    pumpTime = (long)(mltos * fert3Ml * 1000.0);
     digitalWrite(fert3Pin, HIGH);
-    ITimer5.attachInterruptInterval(pumpTime, stopPump, fert3Pin, pumpTime);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &fert3Pin);
     adjustmentActive = true;
+    lastFertAdjustment = millis();
     return;
   }
 }
 
-void stopPump(int pumpPin){
-  digitalWrite(pumpPin, LOW);
+void TimerHandler(void)
+{
+  ISR_Timer5.run();
+}
+
+void stopPump(void* pumpPin){
+  int pin = *static_cast<int*>(pumpPin);
+  Serial.println("Stopping pump");
+  Serial.println(pin);
+  digitalWrite(pin, LOW);
   adjustmentActive = false;
+  Serial.println(millis());
   lastAdjustment = millis();
   
 }
