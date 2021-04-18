@@ -1,119 +1,121 @@
 
-//#include <DHT22.h>
+/*
+   include external sensors libraries
+*/
 #include <DHT.h>
-
 #include "WiFiEsp.h"
 #include <OneWire.h>
 #include <EEPROM.h>
 //#include "GravityTDS.h"
 #include "DFRobot_PH.h"
-#include <Regexp.h>
-#define USE_TIMER_5     true
-#include "TimerInterrupt.h"
-#include "ISR_Timer.h"
 
+/*
+   include configuration
+*/
+#include "Config.h"
 #include "arduino_secrets.h"
 
-// Emulate Serial1 on pins 6/7 if not present
+/*
+   include external programmatic libraries
+*/
+#include <Regexp.h>
+#include "TimerInterrupt.h"
+#include "ISR_Timer.h"
+/*
+   overwrite value from library
+*/
+ISR_Timer ISR_Timer5;
+
+/*
+   Emulate Serial1 on pins 6/7 if not present
+*/
 #ifndef HAVE_HWSERIAL1
 #include "SoftwareSerial.h"
 SoftwareSerial Serial1(6, 7); // RX, TX
 #endif
 
-#define TdsSensorPin A12
-#define TdsPowerPin 45
-#define PhSensorPin A1
-#define DHT22_PIN 44
-#define DHTTYPE DHT22
-
-// pump timing
-float mltos = 0.9325;
-long waitBeforeNewAdjustment = 10 * 60 * 1000l;
-long lastAdjustment = 0;
-bool adjustmentActive = false;
-float phUpMl = 1.0;
-float phDownMl = 1.0;
-float fert1Ml = 3.0;
-float fert2Ml = 1.5;
-float fert3Ml = 0.75;
-float phMin = 5.8;
-float phMax = 6.5;
-float ecMin = 1500.0;
-long lastPhAdjustment = 0;
-long lastFertAdjustment = 0;
-ISR_Timer ISR_Timer5;
-
-int phUpPin = 26;
-int phDownPin = 27;
-int fert1Pin = 28;
-int fert2Pin = 29;
-int fert3Pin = 30;
 
 
-//EEPROM
-int eepromStart = 512;
-int fanSpeedOffset = 0;
-int lightDutyOffset = 4;
-int fogOnOffset = 8;
-int fogOffOffset = 12;
-int ecMinOffset = 16;
 
 
-// wifi
-char ssid[] = WIFI_SSID;            // your network SSID (name)
-char pass[] = WIFI_PASSWD;        // your network password
+/*
+    set wifi credentials / variables
+*/
 int status = WL_IDLE_STATUS;     // the Wifi radio's status
+char ssid[] = WIFI_SSID;            // your network SSID (name)
+char pass[] = WIFI_PASSWD;
+WiFiEspServer server(WEBSERVER_PORT);
 long lastWifiStateCheck = 0;
 
-WiFiEspServer server(80);
 
-// fan
-word fanPin = 9;
-word fanTacho = 2; // only use 2, 3, 18, 19, 20 or 21 on arduino mega 2560
+
+/*
+   pump adjustments variables
+*/
+bool adjustmentActive = false;
+long lastAdjustment = 0;
+long lastPhAdjustment = 0;
+long lastFertAdjustment = 0;
+
+/*
+   fan
+*/
 int fanSpeed = 10;
 volatile byte halfRevolutions;
 unsigned int rpm;
-unsigned long timeold;
+unsigned long fanTimeOld;
 unsigned int fanOnTime = 5;
 unsigned int fanOffTime = 5;
 bool fanState = true;
 unsigned long fanStateTime;
 
-//fogger
-word fogger1Pin = 6;
-word fogger2Pin = 7;
-//unsigned int foggerOffset = 60;
+/*
+   fogger
+*/
 bool foggerState = true;
 unsigned long fogStateTime = 0;
 unsigned long fogOnTime = 60;
 unsigned long fogOffTime = 120;
 
-//light
-word lightPin = 44;
+/*
+   light
+*/
+
 int lightDuty = 50;
 
-// tds/EC
-//GravityTDS gravityTds;
+/*
+  tds/EC
+*/
 float ecValue = 0;
 float ecSum = 0;
+float ecMin = 1500.0;
 
-// water temp
-int DS18S20_Pin = 4; //DS18S20 Signal pin on digital 4
-OneWire ds(DS18S20_Pin);  // on digital pin 5
+/*
+  water temp
+*/
+//DS18S20 Signal pin on digital 4
+OneWire ds(DS18S20_PIN);  // on digital pin 5
 float waterTemp = 0;
-// ph
+
+/*
+    ph
+*/
 DFRobot_PH ph;
-float phVoltage,phValue,phVoltageCorrected;
+float phVoltage, phValue, phVoltageCorrected;
 
 
-// DHT22
+/*
+    DHT22
+*/
 DHT myDHT22(DHT22_PIN, DHTTYPE);
 unsigned long dhtTime = 0;
 float dhtTemp = 0.0;
 float dhtHumidity = 0.0;
 
 
-// General
+/*
+   General
+*/
 MatchState matchState;
 
 void setup()
@@ -126,55 +128,55 @@ void setup()
   //pumps
   ITimer5.init();
   ITimer5.attachInterruptInterval(10, TimerHandler);
-  pinMode(phUpPin, OUTPUT);
-  pinMode(phDownPin, OUTPUT);
-  pinMode(fert1Pin, OUTPUT);
-  pinMode(fert2Pin, OUTPUT);
-  pinMode(fert3Pin, OUTPUT);
+  pinMode(PH_UP_PIN, OUTPUT);
+  pinMode(PH_DOWN_PIN, OUTPUT);
+  pinMode(FERT_1_PIN, OUTPUT);
+  pinMode(FERT_2_PIN, OUTPUT);
+  pinMode(FERT_3_PIN, OUTPUT);
   ecMin = getEEPROM(eepromStart + ecMinOffset, ecMin);
 
   // initialize fan
-  pinMode(fanPin, OUTPUT);
-  pinMode(fanTacho, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(fanTacho), rpm_fun, RISING);
+  pinMode(FAN_PIN, OUTPUT);
+  pinMode(FAN_TACHO_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FAN_TACHO_PIN), rpm_fun, RISING);
   halfRevolutions = 0;
   rpm = 0;
-  timeold = 0;
+  fanTimeOld = 0;
   fanStateTime = 0;
   pwm25kHzBegin();
   fanSpeed = getEEPROM(eepromStart + fanSpeedOffset, fanSpeed);
   pwmDuty((byte)fanSpeed);
 
 
-  pinMode(PhSensorPin, INPUT);  
+  pinMode(PH_SENSOR_PIN, INPUT);
   waterTemp = getTemp();
-  
-  phVoltage = analogRead(PhSensorPin);
+
+  phVoltage = analogRead(PH_SENSOR_PIN);
   phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
   phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
   delay(50);
 
   // initialize tds
-  pinMode(TdsPowerPin, OUTPUT);
-  digitalWrite(TdsPowerPin, HIGH);
+  pinMode(TDS_POWER_PIN, OUTPUT);
+  digitalWrite(TDS_POWER_PIN, HIGH);
   delay(50);
-//  gravityTds.setPin(TdsSensorPin);
-//  gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
-//  gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
-//  gravityTds.begin();  //initialization
-  pinMode(TdsSensorPin, INPUT);
+  //  gravityTds.setPin(TDS_SENSOR_PIN);
+  //  gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNOd
+  //  gravityTds.setAdcRange(1024);  //1024 for 10bit ADC;4096 for 12bit ADC
+  //  gravityTds.begin();  //initialization
+  pinMode(TDS_SENSOR_PIN, INPUT);
 
   //turn on foggers
-  ecValue = getEc(waterTemp); 
-  digitalWrite(TdsPowerPin, LOW);
+  ecValue = getEc(waterTemp);
+  digitalWrite(TDS_POWER_PIN, LOW);
   delay(100);
-    
+
   fogOnTime = getEEPROM(eepromStart + fogOnOffset, fogOnTime);
   fogOffTime = getEEPROM(eepromStart + fogOffOffset, fogOffTime);
-  pinMode(fogger1Pin, OUTPUT);
-  pinMode(fogger2Pin, OUTPUT);
-  digitalWrite(fogger1Pin, HIGH);
-  digitalWrite(fogger2Pin, HIGH);
+  pinMode(FOGGER_1_PIN, OUTPUT);
+  pinMode(FOGGER_2_PIN, OUTPUT);
+  digitalWrite(FOGGER_1_PIN, HIGH);
+  digitalWrite(FOGGER_2_PIN, HIGH);
   foggerState = true;
 
   //dht
@@ -182,8 +184,8 @@ void setup()
 
   //initialize light
   lightDuty = getEEPROM(eepromStart + lightDutyOffset, lightDuty);
-  pinMode(lightPin, OUTPUT);
-  analogWrite(lightPin, lightDuty * 255 / 100);
+  pinMode(LIGHT_PIN, OUTPUT);
+  analogWrite(LIGHT_PIN, lightDuty * 255 / 100);
 
   // initialize ESP module
   WiFi.init(&Serial1);
@@ -206,23 +208,23 @@ void setup()
   Serial.println("You're connected to the network");
   printWifiStatus();
 
-  // start the web server on port 80
+  // start the web server on port WEBSERVER_PORT
   server.begin();
 }
 
 
 void loop()
 {
-  
+
   unsigned long ms = millis();
 
-  if (ms < timeold) {
+  if (ms < fanTimeOld) {
     //Deal with overflow after ~50 days
-    timeold = ms;
+    fanTimeOld = ms;
     lastAdjustment = ms;
   }
 
-  if (ms < lastWifiStateCheck){
+  if (ms < lastWifiStateCheck) {
     lastWifiStateCheck = ms;
   }
 
@@ -231,40 +233,43 @@ void loop()
     fanStateTime = ms;
   }
 
-  if (halfRevolutions >= 20 || (ms - timeold) > 3000) {
+  if (halfRevolutions >= 20 || (ms - fanTimeOld) > 3000) {
     //Update RPM every 20 counts, increase this for better RPM resolution,
     //decrease for faster update
-    rpm = 30 * 1000 / (ms - timeold) * halfRevolutions;
-    timeold = ms;
+    fanTimeOld = ms;
+    rpm = 30 * 1000 / (ms - fanTimeOld) * halfRevolutions;
+
     halfRevolutions = 0;
   }
 
   if (foggerState && (ms - fogStateTime) > (fogOnTime * 1000)) {
     foggerState = false;
-    digitalWrite(fogger1Pin, LOW);
-    digitalWrite(fogger2Pin, LOW);
     fogStateTime = ms;
+    digitalWrite(FOGGER_1_PIN, LOW);
+    digitalWrite(FOGGER_2_PIN, LOW);
+
   } else if (!foggerState && (ms - fogStateTime) > (fogOffTime * 1000)) {
     foggerState = true;
-    
+    fogStateTime = ms;
+
     waterTemp = getTemp();
 
-    phVoltage = analogRead(PhSensorPin);
+    phVoltage = analogRead(PH_SENSOR_PIN);
     phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
     phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
     delay(50);
-    
-    digitalWrite(TdsPowerPin, HIGH);
+
+    digitalWrite(TDS_POWER_PIN, HIGH);
     delay(50);
     ecValue = getEc(waterTemp);
-    digitalWrite(TdsPowerPin, LOW);
+    digitalWrite(TDS_POWER_PIN, LOW);
     delay(100);
-    digitalWrite(fogger1Pin, HIGH);
-    digitalWrite(fogger2Pin, HIGH);
-    fogStateTime = ms;
+    digitalWrite(FOGGER_1_PIN, HIGH);
+    digitalWrite(FOGGER_2_PIN, HIGH);
+
     Serial.println(adjustmentActive);
     Serial.println(ms - lastAdjustment);
-    if (!adjustmentActive && (ms - lastAdjustment) > waitBeforeNewAdjustment){
+    if (!adjustmentActive && (ms - lastAdjustment) > waitBeforeNewAdjustment) {
       Serial.println("Checking parameters");
       adjustSolution(phValue, ecValue);
     }
@@ -274,15 +279,16 @@ void loop()
 
   if ((ms - dhtTime) > 2000) {
     //getDHTReadings();
+    dhtTime = ms;
     dhtHumidity = myDHT22.readHumidity();
-    if (isnan(dhtHumidity)){
+    if (isnan(dhtHumidity)) {
       dhtHumidity = -1;
     }
     dhtTemp = myDHT22.readTemperature();
-    if(isnan(dhtTemp)){
+    if (isnan(dhtTemp)) {
       dhtTemp = -40;
     }
-    dhtTime = ms;
+
   }
 
   // listen for incoming clients
@@ -377,22 +383,22 @@ void loop()
               matchState.GetCapture (buf, 0);
               lightDuty = constrain(atoi(buf), 0, 100);
               writeEEPROM(eepromStart + lightDutyOffset, lightDuty);
-              analogWrite(lightPin, lightDuty * 255 / 100);
+              analogWrite(LIGHT_PIN, lightDuty * 255 / 100);
               Serial.print("Setting light to: ");
               Serial.println(lightDuty);
             }
 
-//            //ec calibration
-//            result = matchState.Match("calibrateec=(%d+)");
-//            if (result == REGEXP_MATCHED) {
-//              // TODO: implement this properly
-//              char buf [10];
-//              matchState.GetCapture (buf, 0);
-//              int measuredEc = atoi(buf);
-//              waterTemp = getTemp();
-//              Serial.print("Setting ec to: ");
-//              Serial.println(measuredEc);
-//            }
+            //            //ec calibration
+            //            result = matchState.Match("calibrateec=(%d+)");
+            //            if (result == REGEXP_MATCHED) {
+            //              // TODO: implement this properly
+            //              char buf [10];
+            //              matchState.GetCapture (buf, 0);
+            //              int measuredEc = atoi(buf);
+            //              waterTemp = getTemp();
+            //              Serial.print("Setting ec to: ");
+            //              Serial.println(measuredEc);
+            //            }
 
             //ec target
             result = matchState.Match("ecmin=(%d+)");
@@ -418,14 +424,15 @@ void loop()
     Serial.println("Client disconnected");
     delay(100);
   } else {
-    
+
     // attempt to reconnect to WiFi network
-    if ((ms - lastWifiStateCheck) > 10000){
+    if ((ms - lastWifiStateCheck) > 10000) {
+      lastWifiStateCheck = ms;
       status = WiFi.status();
-      if (status != 1){
+      if (status != 1) {
         Serial.println(status);
       }
-      if (status != WL_CONNECTED){
+      if (status != WL_CONNECTED) {
         if ( status == WL_DISCONNECTED) {
           Serial.print("Attempting to connect to WPA SSID: ");
           Serial.println(ssid);
@@ -433,11 +440,10 @@ void loop()
           status = WiFi.begin(ssid, pass);
           if ( status != WL_DISCONNECTED) {
             Serial.println("starting server");
-            server.begin();  
-          }   
-        }  
+            server.begin();
+          }
+        }
       }
-      lastWifiStateCheck = ms;
     }
   }
 }
@@ -457,7 +463,7 @@ int getEEPROM(int address, int def) {
   return set;
 }
 
-void sendJsonReponse(WiFiEspClient client, float waterTemp, float ecValue, float phValue){
+void sendJsonReponse(WiFiEspClient client, float waterTemp, float ecValue, float phValue) {
   client.print(
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: application/json\r\n"
@@ -494,7 +500,7 @@ void sendJsonReponse(WiFiEspClient client, float waterTemp, float ecValue, float
   client.print("}\r\n");
 }
 
-void sendHttpResponse(WiFiEspClient client, float waterTemp, float ecValue, float phValue){
+void sendHttpResponse(WiFiEspClient client, float waterTemp, float ecValue, float phValue) {
   // send a standard http response header
   // use \r\n instead of many println statements to speedup data send
   client.print(
@@ -591,10 +597,10 @@ float getTemp() {
 
 }
 
-float getEc(float waterTemp){
+float getEc(float waterTemp) {
   ecSum = 0;
-  for (int x = 0; x < 10; x++){
-    ecSum += analogRead(TdsSensorPin);
+  for (int x = 0; x < 10; x++) {
+    ecSum += analogRead(TDS_SENSOR_PIN);
     delay(40);
   }
   float averageVoltage = (ecSum / 10) * 5.0 / 1024.0;
@@ -603,41 +609,41 @@ float getEc(float waterTemp){
   return (133.42 * averageVoltage * averageVoltage * averageVoltage - 255.86 * averageVoltage * averageVoltage + 857.39 * averageVoltage) / (1.0 + 0.02 * (waterTemp - 25.0));
 }
 
-void adjustSolution(float phValue, float ecValue){
+void adjustSolution(float phValue, float ecValue) {
   long pumpTime;
-  if(phValue < phMin){
+  if (phValue < phMin) {
     Serial.println("Increasing ph");
-    pumpTime = (long)(mltos * phUpMl * 1000.0);
+    pumpTime = (long)(mlToMs * phUpMl);
     Serial.println(pumpTime);
-    digitalWrite(phUpPin, HIGH);
-    ISR_Timer5.setTimeout(pumpTime, stopPump, &phUpPin);
+    digitalWrite(PH_UP_PIN, HIGH);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &PH_UP_PIN);
     adjustmentActive = true;
     lastPhAdjustment = millis();
     return;
   }
-  if(phValue > phMax){
+  if (phValue > phMax) {
     Serial.println("Decreasing ph");
-    pumpTime = (long)(mltos * phDownMl * 1000.0);
+    pumpTime = (long)(mlToMs * phDownMl);
     Serial.println(pumpTime);
-    digitalWrite(phDownPin, HIGH);
-    ISR_Timer5.setTimeout(pumpTime, stopPump, &phDownPin);
+    digitalWrite(PH_DOWN_PIN, HIGH);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &PH_DOWN_PIN);
     adjustmentActive = true;
     lastPhAdjustment = millis();
     return;
   }
-  if(ecValue < ecMin){
+  if (ecValue < ecMin) {
     Serial.println("Increasing fertilizer");
-    pumpTime = (long)(mltos * fert1Ml * 1000.0);
+    pumpTime = (long)(mlToMs * fert1Ml);
     Serial.println(millis());
     Serial.println(pumpTime);
-    digitalWrite(fert1Pin, HIGH);
-    ISR_Timer5.setTimeout(pumpTime, stopPump, &fert1Pin);
-    pumpTime = (long)(mltos * fert2Ml * 1000.0);
-    digitalWrite(fert2Pin, HIGH);
-    ISR_Timer5.setTimeout(pumpTime, stopPump, &fert2Pin);
-    pumpTime = (long)(mltos * fert3Ml * 1000.0);
-    digitalWrite(fert3Pin, HIGH);
-    ISR_Timer5.setTimeout(pumpTime, stopPump, &fert3Pin);
+    digitalWrite(FERT_1_PIN, HIGH);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &FERT_1_PIN);
+    pumpTime = (long)(mlToMs * fert2Ml);
+    digitalWrite(FERT_2_PIN, HIGH);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &FERT_2_PIN);
+    pumpTime = (long)(mlToMs * fert3Ml);
+    digitalWrite(FERT_3_PIN, HIGH);
+    ISR_Timer5.setTimeout(pumpTime, stopPump, &FERT_3_PIN);
     adjustmentActive = true;
     lastFertAdjustment = millis();
     return;
@@ -649,7 +655,7 @@ void TimerHandler(void)
   ISR_Timer5.run();
 }
 
-void stopPump(void* pumpPin){
+void stopPump(void* pumpPin) {
   int pin = *static_cast<int*>(pumpPin);
   Serial.println("Stopping pump");
   Serial.println(pin);
@@ -657,7 +663,7 @@ void stopPump(void* pumpPin){
   adjustmentActive = false;
   Serial.println(millis());
   lastAdjustment = millis();
-  
+
 }
 
 //void getDHTReadings() {
