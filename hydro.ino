@@ -22,7 +22,7 @@ SoftwareSerial Serial1(6, 7); // RX, TX
 
 #define TdsSensorPin A12
 #define TdsPowerPin 45
-#define PhSensorPin A1
+#define PhSensorPin A2
 #define DHT22_PIN 44
 #define DHTTYPE DHT22
 
@@ -31,8 +31,8 @@ float mltos = 0.9325;
 long waitBeforeNewAdjustment = 10 * 60 * 1000l;
 long lastAdjustment = 0;
 bool adjustmentActive = false;
-float phUpMl = 1.0;
-float phDownMl = 1.0;
+float phUpMl = 5.0;
+float phDownMl = 5.0;
 float fert1Ml = 3.0;
 float fert2Ml = 1.5;
 float fert3Ml = 0.75;
@@ -380,6 +380,18 @@ void loop()
               analogWrite(lightPin, lightDuty * 255 / 100);
               Serial.print("Setting light to: ");
               Serial.println(lightDuty);
+            }
+
+            //calibrate pH
+            result = matchState.Match("phcal");
+            if (result == REGEXP_MATCHED) {
+              
+              Serial.print("Calibrating pH");
+              phVoltage = analogRead(PhSensorPin);
+              phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
+              ph.calibration(phVoltageCorrected, waterTemp, "ENTERPH");
+              ph.calibration(phVoltageCorrected, waterTemp, "CALPH");
+              ph.calibration(phVoltageCorrected, waterTemp, "EXITPH");
             }
 
 //            //ec calibration
