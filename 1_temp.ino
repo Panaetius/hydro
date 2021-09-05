@@ -1,6 +1,6 @@
 // water temp
 int DS18S20_Pin = 4; //DS18S20 Signal pin on digital 4
-OneWire ds(DS18S20_Pin);  // on digital pin 5
+OneWire ds(DS18S20_Pin); 
 float waterTemp = 0;
 
 void temp_json_response(WiFiEspClient client){  

@@ -101,9 +101,9 @@ void stopSpray(void* boxNumber){
   Serial.println("Stopping box spraying");
   Serial.println(box);
   digitalWrite(boxPins[box], LOW);
+  box++;
 
   if (box < (sizeof(boxPins) / sizeof(boxPins[0]))){
-    box++;
     digitalWrite(boxPins[box], HIGH);
     ISR_Timer4.setTimeout(sprayDuration, stopSpray, &box);
   }else{
