@@ -1,3 +1,14 @@
+
+#define use_temp true
+#define use_fan false
+#define use_foggers false
+#define use_dht false
+#define use_nutrient_pumps true
+#define use_hpa_pump true
+#define use_ph true
+#define use_ec true
+#define use_lights false
+
 #include <DHT.h>
 
 
@@ -17,6 +28,9 @@
 
 #include "arduino_secrets.h"
 
+unsigned long lastSensorCheck = 0;
+long sensorCheckInterval = 60;
+
 // wifi
 char ssid[] = WIFI_SSID;            // your network SSID (name)
 char pass[] = WIFI_PASSWD;        // your network password
@@ -34,6 +48,9 @@ void setup()
   Serial.begin(115200);
   // initialize serial for ESP module
   Serial1.begin(115200);
+#if use_temp
+  begin_temp();
+#endif
 
 #if use_dht
   begin_dht()
@@ -48,7 +65,7 @@ void setup()
 #endif
 
 #if use_ph    
-  waterTemp = getTemp();
+  float waterTemp = getTemp();
   begin_ph(waterTemp);
 #endif
 
@@ -124,9 +141,21 @@ void loop()
   update_hpa(ms);
 #endif
 
+  if (ms - lastSensorCheck > sensorCheckInterval * 1000){
+
+#if use_temp
+    float waterTemp = updateTemp();
+#endif 
+
 #if use_ph
-  update_ph(ms);
+    update_ph(ms);
 #endif
+
+#if use_ec
+    update_ec(ms, waterTemp);
+#endif
+    lastSensorCheck = ms;
+  }
 
   // listen for incoming clients
   WiFiEspClient client = server.available();

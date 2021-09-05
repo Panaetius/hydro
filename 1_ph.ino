@@ -4,20 +4,27 @@ float phVoltage,phValue,phVoltageCorrected;
 
 void begin_ph(float waterTemp){
   pinMode(PhSensorPin, INPUT);
+  pinMode(PhPowerPin, OUTPUT);
+  digitalWrite(PhPowerPin, HIGH);
+  delay(800);
   
   phVoltage = analogRead(PhSensorPin);
   phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
   phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
   delay(50);
+  digitalWrite(PhPowerPin, HIGH);
 }
 
 void update_ph(unsigned long ms){
   float waterTemp = getTemp();
+  //digitalWrite(PhPowerPin, HIGH);
+  //delay(300);
 
   phVoltage = analogRead(PhSensorPin);
   phVoltageCorrected = phVoltage / 1024.0 * 5000;  // read the voltage
   phValue = ph.readPH(phVoltageCorrected, waterTemp);  // convert voltage to pH with temperature compensation
   delay(50);
+  //digitalWrite(PhPowerPin, LOW);
 }
 
 void handle_ph_update(MatchState matchState){

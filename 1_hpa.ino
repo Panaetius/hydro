@@ -1,13 +1,19 @@
-float minPressure = 5.5;
-float maxPressure = 7;
+float minPressure = 6.0;
+float maxPressure = 7.5;
 float currentPressure, hpaCorrectedVoltage;
+float hpaZeroPressureVolt = 488.0;
 
 long sprayDuration = 2 * 1000;
 unsigned long sprayInterval = 15 * 60.0;
 word boxPins[] = {33, 34, 35};
 word hpaPumpPin = 32;
+int currentBoxNum = 0;
 
 bool hpaActive = false;
+bool hpaPumpActive = false;
+bool hpaError = false;
+long maxPumpTime = 60;
+unsigned long startPumpTime = 0;
 unsigned long lastSprayTime = 0;
 
 int hpaDurationOffset = 20;
@@ -22,6 +28,8 @@ void begin_hpa(){
   
   sprayDuration = getEEPROM(eepromStart + hpaDurationOffset, sprayDuration);
   sprayInterval = getEEPROM(eepromStart + hpaIntervalOffset, sprayInterval);
+  
+  pinMode(HpaPressureSensorPin, INPUT);
   pinMode(hpaPumpPin, OUTPUT);
 
   for (byte i = 0; i < (sizeof(boxPins) / sizeof(boxPins[0])); i++){
@@ -30,21 +38,34 @@ void begin_hpa(){
 }
 
 void update_hpa(unsigned long ms){
-  if ((ms - lastSprayTime) > (sprayInterval * 1000) && !hpaActive) {
+  currentPressure = getHpaPressure();
+  if (ms - startPumpTime > maxPumpTime * 1000 && hpaPumpActive && !hpaError){
+    Serial.println("Emergency HPA stop");
+    digitalWrite(hpaPumpPin, LOW);
+    hpaActive = false; 
+    hpaPumpActive = false; 
+    hpaError = true;
+  }
+  
+  if ((ms - lastSprayTime) > (sprayInterval * 1000) && !hpaActive && !hpaError) {
+    Serial.println("Spraying boxes");
     hpaActive = true;
-    int box = 0;
-    digitalWrite(boxPins[box], HIGH);
-    ISR_Timer4.setTimeout(sprayDuration, stopSpray, &box);    
-  } else if (!hpaActive && getHpaPressure() < minPressure){
+    currentBoxNum = 0;
+    digitalWrite(boxPins[currentBoxNum], HIGH);
+    ISR_Timer4.setTimeout(sprayDuration, stopSpray);    
+  } else if (!hpaActive && getHpaPressure() < minPressure && !hpaError){
+    Serial.println("Running pump to increase pressure.");
     hpaActive = true;
+    hpaPumpActive = true;
+    startPumpTime = ms;
     digitalWrite(hpaPumpPin, HIGH);
-    ISR_Timer4.setTimeout(200, maybeStopHpaPump);  
+    ISR_Timer4.setTimeout(1000, maybeStopHpaPump);  
   } 
 }
 
 void hpa_pump_json_response(WiFiEspClient client){
   client.print(", \"hpaPressure\": ");
-  client.print(getHpaPressure());  
+  client.print(currentPressure);  
   client.print(", \"hpaSprayInterval\": ");
   client.print(sprayInterval);  
   client.print(", \"hpaSprayDuration\": ");
@@ -76,10 +97,15 @@ void handle_hpa_update(MatchState matchState){
 }
 
 float getHpaPressure(){
-  float hpaVoltage = analogRead(HpaPressureSensorPin);
-  hpaCorrectedVoltage = hpaVoltage / 1024.0 * 5000;
-  currentPressure = (hpaCorrectedVoltage - 500) * 2.25;
-  return currentPressure;
+  float hpaVoltage;
+  float pressureSum = 0;
+  for (int i = 0; i < 3; i++){
+    hpaVoltage = analogRead(HpaPressureSensorPin);
+    hpaCorrectedVoltage = hpaVoltage / 1024.0 * 5000;
+    pressureSum += (hpaCorrectedVoltage - hpaZeroPressureVolt) * 9.8 / (4 * 1000);
+    delay(50);
+  }
+  return pressureSum / 3.0;
 }
 
 void Timer4Handler(void)
@@ -88,27 +114,29 @@ void Timer4Handler(void)
 }
 
 void maybeStopHpaPump(){
-  if (getHpaPressure() < maxPressure){
-    ISR_Timer4.setTimeout(200, maybeStopHpaPump);      
+  if (currentPressure < maxPressure && !hpaError){
+    ISR_Timer4.setTimeout(1000, maybeStopHpaPump);      
   } else{
     digitalWrite(hpaPumpPin, LOW);
     hpaActive = false;    
+    hpaPumpActive = false;
   }
 }
 
-void stopSpray(void* boxNumber){
-  int box = *static_cast<int*>(boxNumber);
-  Serial.println("Stopping box spraying");
-  Serial.println(box);
-  digitalWrite(boxPins[box], LOW);
-  box++;
+void stopSpray(){
+  Serial.print("Stopping box spraying ");
+  Serial.println(currentBoxNum);
+  digitalWrite(boxPins[currentBoxNum], LOW);
+  currentBoxNum ++;
 
-  if (box < (sizeof(boxPins) / sizeof(boxPins[0]))){
-    digitalWrite(boxPins[box], HIGH);
-    ISR_Timer4.setTimeout(sprayDuration, stopSpray, &box);
+  if (currentBoxNum < (sizeof(boxPins) / sizeof(boxPins[0]))){
+    delay(500);
+    digitalWrite(boxPins[currentBoxNum], HIGH);
+    ISR_Timer4.setTimeout(sprayDuration, stopSpray);
   }else{
     hpaActive = false;
     Serial.println(millis());
     lastSprayTime = millis();
+    currentBoxNum = 0;
   }  
 }

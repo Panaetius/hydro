@@ -3,6 +3,18 @@ int DS18S20_Pin = 4; //DS18S20 Signal pin on digital 4
 OneWire ds(DS18S20_Pin); 
 float waterTemp = 0;
 
+void begin_temp(){  
+  pinMode(TempPowerPin, OUTPUT);
+  digitalWrite(TempPowerPin, HIGH);
+  delay(50);
+  waterTemp = getTemp();
+}
+
+float updateTemp(){
+  waterTemp = getTemp();
+  return waterTemp;
+}
+
 void temp_json_response(WiFiEspClient client){  
   client.print("{\"waterTemp\": ");
   client.print(waterTemp);
@@ -10,13 +22,14 @@ void temp_json_response(WiFiEspClient client){
 
 float getTemp() {
   //returns the temperature from one DS18S20 in DEG Celsius
+  delay(200);
 
   byte data[12];
   byte addr[8];
 
   if ( !ds.search(addr)) {
     //no more sensors on chain, reset search
-    ds.reset_search();
+    ds.reset_search();    
     return -1000;
   }
 

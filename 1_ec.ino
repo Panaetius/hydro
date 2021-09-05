@@ -20,8 +20,7 @@ void begin_ec(float waterTemp){
   delay(100);
 }
 
-void update_ec(unsigned long ms){
-  float waterTemp = getTemp();
+void update_ec(unsigned long ms, float waterTemp){
   digitalWrite(TdsPowerPin, HIGH);
   delay(50);
   ecValue = getEc(waterTemp);
