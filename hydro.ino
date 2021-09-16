@@ -3,7 +3,7 @@
 #define use_fan false
 #define use_foggers false
 #define use_dht false
-#define use_nutrient_pumps true
+#define use_nutrient_pumps false
 #define use_hpa_pump true
 #define use_ph true
 #define use_ec true
@@ -20,13 +20,14 @@
 #include <Regexp.h>
 
 
-#define USE_TIMER_4     true
+//#define USE_TIMER_4     true
 #define USE_TIMER_5     true
 
 #include "TimerInterrupt.h"
 #include "ISR_Timer.h"
 
 #include "arduino_secrets.h"
+ISR_Timer ISR_Timer5;
 
 unsigned long lastSensorCheck = 0;
 long sensorCheckInterval = 60;
@@ -42,12 +43,22 @@ WiFiEspServer server(80);
 // General
 MatchState matchState;
 
+
+
+void Timer5Handler(void)
+{
+  ISR_Timer5.run();
+}
+
 void setup()
 {
   // initialize serial for debugging
   Serial.begin(115200);
   // initialize serial for ESP module
   Serial1.begin(115200);
+  
+  ITimer5.init();
+  ITimer5.attachInterruptInterval(10, Timer5Handler);
 #if use_temp
   begin_temp();
 #endif
@@ -56,7 +67,7 @@ void setup()
   begin_dht()
 #endif
 
-#if use_pumps
+#if use_nutrient_pumps
   begin_pumps();
 #endif
   
@@ -133,7 +144,7 @@ void loop()
   update_foggers(ms);
 #endif
 
-#if use_pumps
+#if use_nutrient_pumps
   update_pumps(ms);
 #endif
 
@@ -220,7 +231,7 @@ void loop()
       }
     }
     // give the web browser time to receive the data
-    delay(10);
+    delay(50);
 
     // close the connection:
     client.stop();

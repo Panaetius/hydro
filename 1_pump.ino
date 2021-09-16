@@ -13,7 +13,6 @@ float phMax = 6.5;
 float ecMin = 1500.0;
 long lastPhAdjustment = 0;
 long lastFertAdjustment = 0;
-ISR_Timer ISR_Timer5;
 
 int phUpPin = 26;
 int phDownPin = 27;
@@ -24,8 +23,6 @@ int fert3Pin = 30;
 int ecMinOffset = 16;
 
 void begin_pumps(){
-  ITimer5.init();
-  ITimer5.attachInterruptInterval(10, Timer5Handler);
   pinMode(phUpPin, OUTPUT);
   pinMode(phDownPin, OUTPUT);
   pinMode(fert1Pin, OUTPUT);
@@ -106,11 +103,6 @@ void adjustSolution(float phValue, float ecValue){
     lastFertAdjustment = millis();
     return;
   }
-}
-
-void Timer5Handler(void)
-{
-  ISR_Timer5.run();
 }
 
 void stopPump(void* pumpPin){

@@ -22,7 +22,6 @@ void temp_json_response(WiFiEspClient client){
 
 float getTemp() {
   //returns the temperature from one DS18S20 in DEG Celsius
-  delay(200);
 
   byte data[12];
   byte addr[8];
